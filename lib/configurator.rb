@@ -4,7 +4,6 @@ require 'ostruct'
 # order to provide a consistent way to use configuration throughout your
 # application
 class Configurator
-
   # Run the configurator and return the processed values
   #
   # @example Simple mapping
@@ -39,7 +38,7 @@ class Configurator
   #   a list of environment variables to scan for configuration
   # @return OpenStruct configuration object
   def self.run(mapping)
-    reader = self.new(mapping)
+    reader = new(mapping)
     reader.read
   end
 
@@ -58,7 +57,9 @@ class Configurator
     @mapping.each do |key, values|
       @overrides[key] = values.pop if values.last.is_a? Proc
       env_name = values.find { |v| ENV[v] }
-      @storage[key] = YAML.parse(ENV[env_name]).to_ruby if env_name
+      @storage[key] = if env_name
+                        ENV[env_name].empty? ? '' : YAML.parse(ENV[env_name]).to_ruby
+                      end
     end
   end
 

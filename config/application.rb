@@ -15,8 +15,8 @@ module Errbit
     # Application configuration should go into files in config/initializers
     # -- all .rb files in that directory are automatically loaded.
 
-    # Custom directories with classes and modules you want to be autoloadable.
-    config.autoload_paths += [Rails.root.join('lib')]
+    # Custom directories with classes and modules you want to eager load.
+    config.eager_load_paths << Rails.root.join('lib').to_s
 
     config.before_initialize do
       config.secret_key_base = Errbit::Config.secret_key_base
@@ -37,9 +37,9 @@ module Errbit
 
     # > rails generate - config
     config.generators do |g|
-      g.orm             :mongoid
+      g.orm :mongoid
       g.template_engine :haml
-      g.test_framework  :rspec, :fixture => false
+      g.test_framework :rspec, fixture: false
       g.fixture_replacement :fabrication
     end
 
@@ -48,5 +48,7 @@ module Errbit
 
     # Configure Devise mailer to use our mailer layout.
     config.to_prepare { Devise::Mailer.layout 'mailer' }
+
+    config.active_job.queue_adapter = :sucker_punch
   end
 end

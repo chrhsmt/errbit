@@ -22,13 +22,10 @@ class ErrorReport
   attr_reader :notice
   attr_reader :notifier
   attr_reader :problem
+  attr_reader :problem_was_resolved
   attr_reader :request
   attr_reader :server_environment
   attr_reader :user_attributes
-
-  cattr_accessor :fingerprint_strategy do
-    Fingerprint::Sha1
-  end
 
   def initialize(xml_or_attributes)
     @attributes = xml_or_attributes
@@ -56,7 +53,10 @@ class ErrorReport
     return @notice if @notice
 
     make_notice
-    error.notices << @notice
+    notice.err_id = error.id
+    notice.save!
+
+    retrieve_problem_was_resolved
     cache_attributes_on_problem
     email_notification
     services_notification
@@ -65,16 +65,20 @@ class ErrorReport
 
   def make_notice
     @notice = Notice.new(
-      app: app,
-      message: message,
-      error_class: error_class,
-      backtrace: backtrace,
-      request: request,
+      app:                app,
+      message:            message,
+      error_class:        error_class,
+      backtrace:          backtrace,
+      request:            request,
       server_environment: server_environment,
-      notifier: notifier,
-      user_attributes: user_attributes,
-      framework: framework
+      notifier:           notifier,
+      user_attributes:    user_attributes,
+      framework:          framework
     )
+  end
+
+  def retrieve_problem_was_resolved
+    @problem_was_resolved = Problem.where('_id' => @error.problem_id, resolved: true).exists?
   end
 
   # Update problem cache with information about this notice
@@ -82,23 +86,29 @@ class ErrorReport
     @problem = Problem.cache_notice(@error.problem_id, @notice)
   end
 
+  def should_email?
+    problem_was_resolved ||
+      app.email_at_notices.include?(0) ||
+      app.email_at_notices.include?(@problem.notices_count)
+  end
+
   # Send email notification if needed
   def email_notification
-    return false unless app.emailable?
-    return false unless app.email_at_notices.include?(@problem.notices_count)
+    return unless app.emailable? && should_email?
     Mailer.err_notification(self).deliver_now
   rescue => e
     HoptoadNotifier.notify(e)
   end
 
   def should_notify?
-    app.notification_service.notify_at_notices.include?(0) ||
+    problem_was_resolved ||
+      app.notification_service.notify_at_notices.include?(0) ||
       app.notification_service.notify_at_notices.include?(@problem.notices_count)
   end
 
   # Launch all notification define on the app associate to this notice
   def services_notification
-    return true unless app.notification_service_configured? and should_notify?
+    return unless app.notification_service_configured? && should_notify?
     app.notification_service.create_notification(problem)
   rescue => e
     HoptoadNotifier.notify(e)
@@ -130,9 +140,7 @@ class ErrorReport
     Gem::Version.new(app_version) >= Gem::Version.new(current_version)
   end
 
-  private
-
   def fingerprint
-    @fingerprint ||= fingerprint_strategy.generate(notice, api_key)
+    app.notice_fingerprinter.generate(api_key, notice, backtrace)
   end
 end

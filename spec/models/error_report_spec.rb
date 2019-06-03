@@ -17,18 +17,18 @@ module Airbrake
 end
 
 describe ErrorReport do
-  let(:xml){
-    Rails.root.join('spec','fixtures','hoptoad_test_notice.xml').read
-  }
+  let(:xml) do
+    Rails.root.join('spec', 'fixtures', 'hoptoad_test_notice.xml').read
+  end
 
   let(:error_report) { ErrorReport.new(xml) }
 
-  let!(:app) {
+  let!(:app) do
     Fabricate(
       :app,
-      :api_key => 'APIKEY'
+      api_key: 'APIKEY'
     )
-  }
+  end
 
   describe "#app" do
     it 'find the good app' do
@@ -42,53 +42,41 @@ describe ErrorReport do
     end
   end
 
-  describe "#fingerprint_strategy" do
-    it "should be possible to change how fingerprints are generated" do
-      def error_report.fingerprint_strategy
-        Class.new do
-          def self.generate(*args)
-            'fingerprintzzz'
-          end
-        end
-      end
-
-      expect(error_report.error.fingerprint).to eq('fingerprintzzz')
-    end
-  end
-
   describe "#generate_notice!" do
     it "save a notice" do
-      expect {
+      expect do
         error_report.generate_notice!
-      }.to change {
+      end.to change {
         app.reload.problems.count
       }.by(1)
     end
 
     context "with a minimal notice" do
-      let(:xml){
-        Rails.root.join('spec','fixtures','minimal_test_notice.xml').read
-      }
+      let(:xml) do
+        Rails.root.join('spec', 'fixtures', 'minimal_test_notice.xml').read
+      end
 
       it 'save a notice' do
-        expect {
+        expect do
           error_report.generate_notice!
-        }.to change {
+        end.to change {
           app.reload.problems.count
         }.by(1)
       end
     end
 
     context "with notice generate by Airbrake gem" do
-      let(:xml) { Airbrake::Notice.new(
-        :exception => Exception.new,
-        :api_key => 'APIKEY',
-        :project_root => Rails.root
-      ).to_xml }
+      let(:xml) do
+        Airbrake::Notice.new(
+          exception:    Exception.new,
+          api_key:      'APIKEY',
+          project_root: Rails.root
+        ).to_xml
+      end
       it 'save a notice' do
-        expect {
+        expect do
           error_report.generate_notice!
-        }.to change {
+        end.to change {
           app.reload.problems.count
         }.by(1)
       end
@@ -97,8 +85,14 @@ describe ErrorReport do
     describe "notice create" do
       before { error_report.generate_notice! }
       subject { error_report.notice }
-      its(:message) { 'HoptoadTestingException: Testing hoptoad via "rake hoptoad:test". If you can see this, it works.' }
-      its(:framework) { should == 'Rails: 3.2.11' }
+
+      it 'has correct message' do
+        expect(subject.message).to include('HoptoadTestingException: Testing hoptoad via "rake hoptoad:test". If you can see this, it works')
+      end
+
+      it 'has correct framework' do
+        expect(subject.framework).to eq('Rails: 3.2.11')
+      end
 
       it 'has complete backtrace' do
         expect(subject.backtrace_lines.size).to eq 73
@@ -140,12 +134,12 @@ describe ErrorReport do
         #   <var key="id"/>
         # </var>
         expected = {
-          'secure'        => 'false',
-          'httponly'      => 'true',
-          'path'          => '/',
-          'expire_after'  => nil,
-          'domain'        => nil,
-          'id'            => nil
+          'secure'       => 'false',
+          'httponly'     => 'true',
+          'path'         => '/',
+          'expire_after' => nil,
+          'domain'       => nil,
+          'id'           => nil
         }
         expect(subject.env_vars).to have_key('rack_session_options')
         expect(subject.env_vars['rack_session_options']).to eql(expected)
@@ -170,8 +164,8 @@ describe ErrorReport do
       error_report.generate_notice!
       problem = error_report.problem
       problem.update(
-        resolved_at: Time.now,
-        resolved: true
+        resolved_at: Time.zone.now,
+        resolved:    true
       )
 
       error_report = ErrorReport.new(xml)
@@ -213,10 +207,10 @@ describe ErrorReport do
   end
 
   it 'memoize the notice' do
-    expect {
+    expect do
       error_report.generate_notice!
       error_report.generate_notice!
-    }.to change {
+    end.to change {
       Notice.count
     }.by(1)
   end
@@ -225,9 +219,9 @@ describe ErrorReport do
     error_report.generate_notice!
     error_report.problem.resolve!
 
-    expect {
+    expect do
       ErrorReport.new(xml).generate_notice!
-    }.to change {
+    end.to change {
       error_report.problem.reload.resolved?
     }.from(true).to(false)
   end
@@ -235,7 +229,7 @@ describe ErrorReport do
   context "with notification service configured" do
     before do
       app.notify_on_errs = true
-      app.watchers.build(:email => 'foo@example.com')
+      app.watchers.build(email: 'foo@example.com')
       app.save
     end
 
@@ -248,27 +242,79 @@ describe ErrorReport do
       expect(email.subject).to include("[#{notice.environment_name}]")
     end
 
+    context 'when email_at_notices config is specified', type: :mailer do
+      before do
+        allow(Errbit::Config).to receive(:email_at_notices).and_return(email_at_notices)
+      end
+
+      context 'as [0]' do
+        let(:email_at_notices) { [0] }
+
+        it "sends email on 1st occurrence" do
+          1.times { described_class.new(xml).generate_notice! }
+          expect(ActionMailer::Base.deliveries.length).to eq(1)
+        end
+
+        it "sends email on 2nd occurrence" do
+          2.times { described_class.new(xml).generate_notice! }
+          expect(ActionMailer::Base.deliveries.length).to eq(2)
+        end
+
+        it "sends email on 3rd occurrence" do
+          3.times { described_class.new(xml).generate_notice! }
+          expect(ActionMailer::Base.deliveries.length).to eq(3)
+        end
+      end
+
+      context "as [1,3]" do
+        let(:email_at_notices) { [1, 3] }
+
+        it "sends email on 1st occurrence" do
+          1.times { described_class.new(xml).generate_notice! }
+          expect(ActionMailer::Base.deliveries.length).to eq(1)
+        end
+
+        it "does not send email on 2nd occurrence" do
+          2.times { described_class.new(xml).generate_notice! }
+          expect(ActionMailer::Base.deliveries.length).to eq(1)
+        end
+
+        it "sends email on 3rd occurrence" do
+          3.times { described_class.new(xml).generate_notice! }
+          expect(ActionMailer::Base.deliveries.length).to eq(2)
+        end
+
+        it "sends email on all occurrences when problem was resolved" do
+          3.times do
+            notice = described_class.new(xml).generate_notice!
+            notice.problem.resolve!
+          end
+          expect(ActionMailer::Base.deliveries.length).to eq(3)
+        end
+      end
+    end
+
     context "with xml without request section" do
-      let(:xml){
-        Rails.root.join('spec','fixtures','hoptoad_test_notice_without_request_section.xml').read
-      }
+      let(:xml) do
+        Rails.root.join('spec', 'fixtures', 'hoptoad_test_notice_without_request_section.xml').read
+      end
       it "save a notice" do
-        expect {
+        expect do
           error_report.generate_notice!
-        }.to change {
+        end.to change {
           app.reload.problems.count
         }.by(1)
       end
     end
 
     context "with xml with only a single line of backtrace" do
-      let(:xml){
-        Rails.root.join('spec','fixtures','hoptoad_test_notice_with_one_line_of_backtrace.xml').read
-      }
+      let(:xml) do
+        Rails.root.join('spec', 'fixtures', 'hoptoad_test_notice_with_one_line_of_backtrace.xml').read
+      end
       it "save a notice" do
-        expect {
+        expect do
           error_report.generate_notice!
-        }.to change {
+        end.to change {
           app.reload.problems.count
         }.by(1)
       end
@@ -283,7 +329,7 @@ describe ErrorReport do
     end
     context "with not valid api_key" do
       before do
-        App.where(:api_key => app.api_key).delete_all
+        App.where(api_key: app.api_key).delete_all
       end
       it "return false" do
         expect(error_report.valid?).to be false
@@ -306,7 +352,6 @@ describe ErrorReport do
       it 'return the notice' do
         expect(error_report.notice).to be_a Notice
       end
-
     end
   end
 
